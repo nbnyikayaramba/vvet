@@ -74,7 +74,8 @@ The suite mocks the LLM provider and covers the API contract, the five
 assessment examples, pure escalation rules, strict output validation, and
 failure handling. Mocked tests verify plumbing — they do **not** demonstrate
 real extraction accuracy. During development the five example messages were
-also run against the live model (`gpt-4o-mini`) and returned the expected
+also run against the live model (`gpt-6-luna`; the `gpt-6-astra` comparison is
+in [MODEL_DECISIONS.md](MODEL_DECISIONS.md)) and returned the expected
 signs, values, quotes and escalation decisions; that is a smoke test, not an
 accuracy evaluation.
 
