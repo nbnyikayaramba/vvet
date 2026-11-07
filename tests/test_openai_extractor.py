@@ -4,10 +4,33 @@ import json
 
 import httpx
 import pytest
-from openai import APIConnectionError, APITimeoutError
+from openai import (
+    APIConnectionError,
+    APITimeoutError,
+    ContentFilterFinishReasonError,
+    LengthFinishReasonError,
+)
+from openai.types.chat import ChatCompletion
 
 from app.extractor import ExtractionError
 from app.providers import FindingsResult, OpenAIExtractor
+
+
+def make_finish_reason_error(error_type) -> Exception:
+    """Build the exception the SDK raises from chat.completions.parse."""
+    reason = "length" if error_type is LengthFinishReasonError else "content_filter"
+    completion = ChatCompletion(
+        id="chatcmpl-test",
+        choices=[{
+            "index": 0,
+            "finish_reason": reason,
+            "message": {"role": "assistant", "content": None},
+        }],
+        created=0,
+        model="gpt-6-luna",
+        object="chat.completion",
+    )
+    return error_type(completion=completion)
 
 
 class FakeMessage:
@@ -112,5 +135,19 @@ async def test_provider_timeout_becomes_extraction_error():
 async def test_provider_outage_becomes_extraction_error():
     outage = APIConnectionError(request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions"))
     extractor = make_extractor(error=outage)
+    with pytest.raises(ExtractionError, match="LLM provider error"):
+        await extractor.extract(MESSAGE)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "error_type",
+    [LengthFinishReasonError, ContentFilterFinishReasonError],
+)
+async def test_parse_finish_reason_errors_become_extraction_error(error_type):
+    # These are raised by the SDK's parse() on truncated/filtered structured
+    # output. They are OpenAIError but NOT APIStatusError subclasses, so they
+    # need explicit handling to avoid an unhandled HTTP 500.
+    extractor = make_extractor(error=make_finish_reason_error(error_type))
     with pytest.raises(ExtractionError, match="LLM provider error"):
         await extractor.extract(MESSAGE)

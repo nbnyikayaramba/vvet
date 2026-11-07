@@ -8,7 +8,14 @@ code.
 
 import json
 
-from openai import APIConnectionError, APIStatusError, APITimeoutError, AsyncOpenAI
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    AsyncOpenAI,
+    ContentFilterFinishReasonError,
+    LengthFinishReasonError,
+)
 from pydantic import BaseModel
 
 from .config import LLM_API_KEY, LLM_BASE_URL, LLM_MODEL, LLM_TIMEOUT_SECONDS
@@ -20,15 +27,17 @@ SYSTEM_PROMPT = """You extract mentions of clinical signs from livestock health
 messages written by farmers in English, Shona, or a mix of both.
 
 Signs you may report (use these exact IDs, and no others):
-- reduced_appetite: not eating, poor appetite, e.g. Shona "haisi kudya"
-- weakness: weak, lethargic, no energy
-- swelling: any swelling, including "mbandabvu" (swelling near the ear, jaw or shoulder)
-- rapid_breathing: breathing fast or with difficulty
-- cloudy_eye: cloudy, white or bluish eye
+- reduced_appetite: the animal is eating less than usual, or has stopped
+  eating or grazing
+- weakness: dull, weak, or lying down more than usual
+- swelling: a lump below the ear, under the jaw, or in front of the
+  shoulder (farmers may call this "mbandabvu" in Shona)
+- rapid_breathing: breathing fast while resting
+- cloudy_eye: the eye looks white, grey or milky
 - froth_nose_mouth: foam or froth from the nose or mouth
-- red_urine: red, dark or tea-coloured urine
-- unable_to_stand: cannot stand or get up
-- ticks: ticks visible on the animal
+- red_urine: urine that is red, brown, or the colour of strong tea
+- unable_to_stand: cannot get up or stay standing
+- ticks: ticks can be seen on the animal
 
 Rules:
 1. Report ONLY signs explicitly mentioned in the message. Never add signs
@@ -38,13 +47,25 @@ Rules:
    Mention without negation has value "yes".
 3. Doubt or uncertainty ("I'm not sure", "maybe", "I think") has value
    "not_sure".
-4. Each finding's "quote" must be an exact verbatim substring of the original
+4. Swelling: report ONLY when the message states one of the locations in
+   the definition (below the ear, under the jaw, in front of the shoulder)
+   or uses the word "mbandabvu". A swollen leg or any other body part is NOT
+   this sign unless one of those locations is also stated.
+5. Rapid breathing: report ONLY when the farmer describes the animal
+   breathing fast (for example "breathing very fast"). General breathing
+   difficulty without fast breathing is NOT this sign.
+6. Each finding's "quote" must be an exact verbatim substring of the original
    message, copied character for character in its ORIGINAL language. Never
    translate, transliterate, rephrase, or fix the wording of a quote — even
    when the message is in Shona or mixes languages, quote the words exactly
    as the farmer wrote them.
-5. Extract findings only. Do not decide escalation, do not give advice, and
-   do not add explanations outside the structured output."""
+7. Extract findings only. Do not decide escalation, do not give advice, and
+   do not add explanations outside the structured output.
+
+Example of correct output for a Shona message:
+Message: "Mombe yangu haisi kudya."
+Correct output: {"findings": [{"sign_id": "reduced_appetite", "value": "yes", "quote": "haisi kudya"}]}
+The quote keeps the farmer's original words — never an English translation."""
 
 
 class FindingsResult(BaseModel):
@@ -82,7 +103,17 @@ class OpenAIExtractor:
                 ],
                 response_format=FindingsResult,
             )
-        except (APITimeoutError, APIConnectionError, APIStatusError) as exc:
+        # ``LengthFinishReasonError``/``ContentFilterFinishReasonError`` are
+        # raised by ``parse`` on truncated/filtered structured output; they
+        # are OpenAIError subclasses, not APIStatusError subclasses, so they
+        # need explicit handling — otherwise they would surface as HTTP 500.
+        except (
+            APITimeoutError,
+            APIConnectionError,
+            APIStatusError,
+            LengthFinishReasonError,
+            ContentFilterFinishReasonError,
+        ) as exc:
             raise ExtractionError(f"LLM provider error: {type(exc).__name__}") from exc
 
         # Validate from the raw JSON text, not the SDK's parsed object, so

@@ -24,10 +24,15 @@ a deterministic escalation decision, and a machine-generated reason:
 
 ```bash
 python -m venv .venv
+
 # Windows PowerShell:
 .venv\Scripts\Activate.ps1
-# Windows Git Bash / Linux / macOS:
-# source .venv/Scripts/activate  (or .venv/bin/activate)
+
+# Windows Git Bash:
+source .venv/Scripts/activate
+
+# macOS / Linux:
+source .venv/bin/activate
 
 pip install -r requirements.txt
 ```
